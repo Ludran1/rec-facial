@@ -1,7 +1,7 @@
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
-from app.services.face_service import extract_embedding, compare_embeddings, detect_face
+from app.services.face_service import extract_embedding, extract_embedding_with_liveness, compare_embeddings, detect_face
 from app.services.supabase_service import (
     get_embeddings_by_tenant,
     get_embeddings_by_cliente,
@@ -78,10 +78,27 @@ async def register_face(req: RegisterRequest):
 async def recognize_face(req: RecognizeRequest):
     """Compara un rostro contra todos los embeddings del tenant."""
     img = decode_base64_image(req.image_base64)
-    embedding = extract_embedding(img)
+    embedding, status = extract_embedding_with_liveness(img)
+
+    if status == "no_face":
+        print("[recognize] sin rostro detectado en la imagen")
+        return {
+            "recognized": False,
+            "reason": "no_face",
+            "message": "No se detectó un rostro en la imagen",
+        }
+
+    if status.startswith("spoofing_detected"):
+        motivo = status.split(":", 1)[1] if ":" in status else "desconocido"
+        print(f"[recognize] SPOOFING detectado: {motivo}")
+        return {
+            "recognized": False,
+            "reason": "spoofing_detected",
+            "message": "Rostro no válido. Mostrá tu cara real, no una foto.",
+            "detail": motivo,
+        }
 
     if embedding is None:
-        print("[recognize] sin rostro detectado en la imagen")
         return {
             "recognized": False,
             "reason": "no_face",

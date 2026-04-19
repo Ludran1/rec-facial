@@ -1,7 +1,8 @@
 import numpy as np
 from insightface.app import FaceAnalysis
 
-from app.config import FACE_THRESHOLD
+from app.config import FACE_THRESHOLD, ANTISPOOFING_ENABLED
+from app.services.anti_spoofing import is_real_face
 
 _app: FaceAnalysis | None = None
 
@@ -39,6 +40,32 @@ def extract_embedding(img: np.ndarray) -> list[float] | None:
         return None
     face = _largest_face(faces)
     return face.embedding.tolist()
+
+
+def extract_embedding_with_liveness(img: np.ndarray) -> tuple[list[float] | None, str]:
+    """
+    Igual que extract_embedding pero con verificación anti-spoofing.
+
+    Returns:
+        (embedding, status) donde status es:
+        - "ok": rostro real detectado
+        - "no_face": no se detectó rostro
+        - "spoofing_detected:<motivo>": parece foto/pantalla
+    """
+    img_bgr = img[:, :, ::-1]
+    app = _get_app()
+    faces = app.get(img_bgr)
+    if not faces:
+        return None, "no_face"
+
+    face = _largest_face(faces)
+
+    if ANTISPOOFING_ENABLED:
+        is_real, reason = is_real_face(img, face.bbox)
+        if not is_real:
+            return None, f"spoofing_detected:{reason}"
+
+    return face.embedding.tolist(), "ok"
 
 
 def compare_embeddings(
