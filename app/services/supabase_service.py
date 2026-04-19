@@ -99,6 +99,34 @@ def save_embedding(
     return result.data[0] if result.data else {}
 
 
+def delete_embedding_by_angle(cliente_id: str, foto_angulo: str) -> int:
+    """Elimina el embedding de un ángulo específico de un cliente."""
+    client = get_client()
+
+    existing = (
+        client.table("face_embeddings")
+        .select("tenant_id")
+        .eq("cliente_id", cliente_id)
+        .eq("foto_angulo", foto_angulo)
+        .limit(1)
+        .execute()
+    )
+    tenant_id = existing.data[0]["tenant_id"] if existing.data else None
+
+    result = (
+        client.table("face_embeddings")
+        .delete()
+        .eq("cliente_id", cliente_id)
+        .eq("foto_angulo", foto_angulo)
+        .execute()
+    )
+
+    if tenant_id:
+        invalidate_tenant_cache(tenant_id)
+
+    return len(result.data) if result.data else 0
+
+
 def delete_embeddings_by_cliente(cliente_id: str) -> int:
     """Elimina todos los embeddings de un cliente. Retorna cantidad eliminada."""
     client = get_client()

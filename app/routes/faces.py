@@ -7,6 +7,7 @@ from app.services.supabase_service import (
     get_embeddings_by_cliente,
     save_embedding,
     delete_embeddings_by_cliente,
+    delete_embedding_by_angle,
 )
 from app.utils.image import decode_base64_image
 
@@ -47,14 +48,13 @@ async def register_face(req: RegisterRequest):
             "No se detectó un rostro en la imagen. Asegúrate de que el rostro esté bien iluminado y visible.",
         )
 
-    # Verificar si ya tiene un embedding con este ángulo
+    # Si ya existe un embedding con este ángulo, lo sobrescribimos (idempotente)
     existing = get_embeddings_by_cliente(req.cliente_id)
-    for e in existing:
-        if e.get("foto_angulo") == req.foto_angulo:
-            raise HTTPException(
-                409,
-                f"El cliente ya tiene una foto registrada para el ángulo '{req.foto_angulo}'. Elimina primero la existente.",
-            )
+    angulo_existente = any(e.get("foto_angulo") == req.foto_angulo for e in existing)
+    accion = "actualizado" if angulo_existente else "registrado"
+
+    if angulo_existente:
+        delete_embedding_by_angle(req.cliente_id, req.foto_angulo)
 
     saved = save_embedding(
         cliente_id=req.cliente_id,
@@ -64,11 +64,14 @@ async def register_face(req: RegisterRequest):
         foto_url=req.foto_url,
     )
 
+    total_fotos = len(existing) + (0 if angulo_existente else 1)
+
     return {
         "success": True,
-        "message": f"Rostro registrado ({req.foto_angulo})",
+        "message": f"Rostro {accion} ({req.foto_angulo})",
         "embedding_id": saved.get("id"),
-        "total_fotos": len(existing) + 1,
+        "total_fotos": total_fotos,
+        "updated": angulo_existente,
     }
 
 
