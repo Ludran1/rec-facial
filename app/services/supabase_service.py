@@ -35,8 +35,9 @@ def invalidate_tenant_cache(tenant_id: str) -> None:
 
 def get_embeddings_by_tenant(tenant_id: str) -> list[dict]:
     """
-    Obtiene todos los embeddings de un tenant para comparación.
-    Usa cache en memoria con TTL para evitar queries repetidas.
+    Obtiene todos los embeddings de un tenant. Usa cache TTL.
+    Solo usado en debugging o como fallback. El path normal de /recognize
+    usa find_best_match (RPC pgvector) que es mucho más eficiente.
     """
     if _is_cache_valid(tenant_id):
         return _embeddings_cache[tenant_id]
@@ -55,6 +56,27 @@ def get_embeddings_by_tenant(tenant_id: str) -> list[dict]:
     print(f"[cache] refrescado tenant={tenant_id[:8]} con {len(data)} embeddings")
 
     return data
+
+
+def find_best_match(tenant_id: str, embedding: list[float]) -> dict | None:
+    """
+    Busca el embedding más cercano usando pgvector (RPC SQL).
+    Retorna {"cliente_id", "distance"} del más cercano, o None si no hay datos.
+    El caller decide si la distance está dentro del threshold.
+    """
+    client = get_client()
+    embedding_str = "[" + ",".join(f"{x:.6f}" for x in embedding) + "]"
+    result = client.rpc("match_face_embedding", {
+        "query_embedding": embedding_str,
+        "query_tenant_id": tenant_id,
+    }).execute()
+    if not result.data:
+        return None
+    row = result.data[0]
+    return {
+        "cliente_id": row["cliente_id"],
+        "distance": float(row["distance"]),
+    }
 
 
 def get_embeddings_by_cliente(cliente_id: str) -> list[dict]:

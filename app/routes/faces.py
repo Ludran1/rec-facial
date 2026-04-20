@@ -1,15 +1,16 @@
 from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel
 
-from app.services.face_service import extract_embedding, extract_embedding_with_liveness, compare_embeddings, detect_face
+from app.services.face_service import extract_embedding, extract_embedding_with_liveness, detect_face
 from app.services.supabase_service import (
-    get_embeddings_by_tenant,
     get_embeddings_by_cliente,
     save_embedding,
     delete_embeddings_by_cliente,
     delete_embedding_by_angle,
     save_recognition_log,
+    find_best_match,
 )
+from app.config import FACE_THRESHOLD
 from app.utils.image import decode_base64_image
 
 router = APIRouter()
@@ -123,10 +124,10 @@ async def recognize_face(req: RecognizeRequest, request: Request):
             "message": "No se detectó un rostro en la imagen",
         }
 
-    stored = get_embeddings_by_tenant(req.tenant_id)
-    print(f"[recognize] rostro detectado, comparando contra {len(stored)} embeddings almacenados")
+    # Búsqueda con pgvector (1 query SQL contra el índice IVFFlat)
+    nearest = find_best_match(req.tenant_id, embedding)
 
-    if not stored:
+    if nearest is None:
         save_recognition_log(
             tenant_id=req.tenant_id, success=False, reason="no_data",
             device_id=req.device_id, ip_address=ip,
@@ -137,27 +138,13 @@ async def recognize_face(req: RecognizeRequest, request: Request):
             "message": "No hay rostros registrados para este gimnasio",
         }
 
-    match = compare_embeddings(embedding, stored)
+    distance = nearest["distance"]
 
-    if match is None:
-        # Calcular mejor distancia para log y debugging
-        import numpy as np
-        qv = np.array(embedding, dtype=np.float32)
-        qn = float(np.linalg.norm(qv))
-        best_d = float("inf")
-        for s in stored:
-            sv = np.array(s["embedding"], dtype=np.float32)
-            sn = float(np.linalg.norm(sv))
-            if sn == 0 or qn == 0:
-                continue
-            cs = float(np.dot(qv, sv) / (qn * sn))
-            d = 1.0 - cs
-            if d < best_d:
-                best_d = d
-        print(f"[recognize] no match - mejor distancia: {best_d:.4f} (threshold actual)")
+    if distance > FACE_THRESHOLD:
+        print(f"[recognize] no match - mejor distancia: {distance:.4f} (threshold {FACE_THRESHOLD})")
         save_recognition_log(
             tenant_id=req.tenant_id, success=False, reason="no_match",
-            distance=best_d if best_d != float("inf") else None,
+            distance=distance,
             device_id=req.device_id, ip_address=ip,
         )
         return {
@@ -166,18 +153,19 @@ async def recognize_face(req: RecognizeRequest, request: Request):
             "message": "Rostro no reconocido",
         }
 
-    print(f"[recognize] MATCH cliente={match['cliente_id'][:8]} distancia={match['distance']:.4f}")
+    confidence = 1.0 - distance
+    print(f"[recognize] MATCH cliente={nearest['cliente_id'][:8]} distancia={distance:.4f}")
     save_recognition_log(
         tenant_id=req.tenant_id, success=True, reason="match",
-        cliente_id=match["cliente_id"],
-        distance=match["distance"], confidence=match["confidence"],
+        cliente_id=nearest["cliente_id"],
+        distance=distance, confidence=confidence,
         device_id=req.device_id, ip_address=ip,
     )
     return {
         "recognized": True,
-        "cliente_id": match["cliente_id"],
-        "confidence": round(match["confidence"] * 100, 1),
-        "distance": round(match["distance"], 4),
+        "cliente_id": nearest["cliente_id"],
+        "confidence": round(confidence * 100, 1),
+        "distance": round(distance, 4),
     }
 
 
