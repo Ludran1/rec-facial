@@ -43,6 +43,8 @@ async def register_face(req: RegisterRequest):
         raise HTTPException(400, "foto_angulo debe ser: frontal, izquierda, derecha")
 
     img = decode_base64_image(req.image_base64)
+    if img is None:
+        raise HTTPException(400, "invalid_image")
     embedding = extract_embedding(img)
 
     if embedding is None:
@@ -85,6 +87,8 @@ async def recognize_face(req: RecognizeRequest, request: Request):
     """Compara un rostro contra todos los embeddings del tenant."""
     ip = request.client.host if request.client else None
     img = decode_base64_image(req.image_base64)
+    if img is None:
+        raise HTTPException(400, "invalid_image")
     embedding, status = extract_embedding_with_liveness(img)
 
     if status == "no_face":
@@ -175,6 +179,8 @@ async def recognize_face(req: RecognizeRequest, request: Request):
 async def detect_face_endpoint(req: DetectRequest):
     """Verifica si hay un rostro detectable en la imagen (para guía en registro)."""
     img = decode_base64_image(req.image_base64)
+    if img is None:
+        raise HTTPException(400, "invalid_image")
     detected = detect_face(img)
     return {"detected": detected}
 

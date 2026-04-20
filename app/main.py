@@ -1,3 +1,5 @@
+import secrets
+
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
@@ -41,9 +43,9 @@ async def verify_api_key(request: Request, call_next):
     if request.url.path in PUBLIC_PATHS:
         return await call_next(request)
 
-    # Validar header
+    # Validar header con comparación constant-time (resistente a timing attacks)
     provided_key = request.headers.get("x-api-key", "")
-    if provided_key != FACE_API_KEY:
+    if not secrets.compare_digest(provided_key, FACE_API_KEY):
         return JSONResponse(
             status_code=401,
             content={"detail": "Invalid or missing X-API-Key header"},
