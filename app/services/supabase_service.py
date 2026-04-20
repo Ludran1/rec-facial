@@ -155,6 +155,39 @@ def delete_embeddings_by_cliente(cliente_id: str) -> int:
     return len(result.data) if result.data else 0
 
 
+def save_recognition_log(
+    tenant_id: str,
+    success: bool,
+    reason: str,
+    cliente_id: str | None = None,
+    distance: float | None = None,
+    confidence: float | None = None,
+    detail: str | None = None,
+    device_id: str | None = None,
+    ip_address: str | None = None,
+) -> None:
+    """
+    Inserta un registro en face_recognition_logs.
+    No bloquea el flow: si falla, solo imprime warning.
+    """
+    try:
+        client = get_client()
+        client.table("face_recognition_logs").insert({
+            "tenant_id": tenant_id,
+            "cliente_id": cliente_id,
+            "success": success,
+            "reason": reason,
+            "detail": detail,
+            "distance": distance,
+            "confidence": confidence,
+            "device_id": device_id,
+            "ip_address": ip_address,
+        }).execute()
+    except Exception as e:
+        # Audit log nunca debe romper el reconocimiento
+        print(f"[audit] error guardando log: {e}")
+
+
 def get_cliente(cliente_id: str) -> dict | None:
     """Obtiene datos básicos del cliente."""
     client = get_client()

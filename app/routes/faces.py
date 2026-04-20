@@ -1,4 +1,4 @@
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel
 
 from app.services.face_service import extract_embedding, extract_embedding_with_liveness, compare_embeddings, detect_face
@@ -8,6 +8,7 @@ from app.services.supabase_service import (
     save_embedding,
     delete_embeddings_by_cliente,
     delete_embedding_by_angle,
+    save_recognition_log,
 )
 from app.utils.image import decode_base64_image
 
@@ -25,6 +26,7 @@ class RegisterRequest(BaseModel):
 class RecognizeRequest(BaseModel):
     tenant_id: str
     image_base64: str
+    device_id: str | None = None
 
 
 class DetectRequest(BaseModel):
@@ -78,13 +80,18 @@ async def register_face(req: RegisterRequest):
 # ── Reconocer rostro ─────────────────────────────────────────────
 
 @router.post("/recognize")
-async def recognize_face(req: RecognizeRequest):
+async def recognize_face(req: RecognizeRequest, request: Request):
     """Compara un rostro contra todos los embeddings del tenant."""
+    ip = request.client.host if request.client else None
     img = decode_base64_image(req.image_base64)
     embedding, status = extract_embedding_with_liveness(img)
 
     if status == "no_face":
         print("[recognize] sin rostro detectado en la imagen")
+        save_recognition_log(
+            tenant_id=req.tenant_id, success=False, reason="no_face",
+            device_id=req.device_id, ip_address=ip,
+        )
         return {
             "recognized": False,
             "reason": "no_face",
@@ -94,6 +101,10 @@ async def recognize_face(req: RecognizeRequest):
     if status.startswith("spoofing_detected"):
         motivo = status.split(":", 1)[1] if ":" in status else "desconocido"
         print(f"[recognize] SPOOFING detectado: {motivo}")
+        save_recognition_log(
+            tenant_id=req.tenant_id, success=False, reason="spoofing_detected",
+            detail=motivo, device_id=req.device_id, ip_address=ip,
+        )
         return {
             "recognized": False,
             "reason": "spoofing_detected",
@@ -102,6 +113,10 @@ async def recognize_face(req: RecognizeRequest):
         }
 
     if embedding is None:
+        save_recognition_log(
+            tenant_id=req.tenant_id, success=False, reason="no_face",
+            device_id=req.device_id, ip_address=ip,
+        )
         return {
             "recognized": False,
             "reason": "no_face",
@@ -112,6 +127,10 @@ async def recognize_face(req: RecognizeRequest):
     print(f"[recognize] rostro detectado, comparando contra {len(stored)} embeddings almacenados")
 
     if not stored:
+        save_recognition_log(
+            tenant_id=req.tenant_id, success=False, reason="no_data",
+            device_id=req.device_id, ip_address=ip,
+        )
         return {
             "recognized": False,
             "reason": "no_data",
@@ -121,23 +140,26 @@ async def recognize_face(req: RecognizeRequest):
     match = compare_embeddings(embedding, stored)
 
     if match is None:
-        # Log para debugging: mostrar la mejor distancia encontrada
-        from app.services.face_service import compare_embeddings as _ce
+        # Calcular mejor distancia para log y debugging
         import numpy as np
-        if stored:
-            qv = np.array(embedding, dtype=np.float32)
-            qn = float(np.linalg.norm(qv))
-            best_d = float("inf")
-            for s in stored:
-                sv = np.array(s["embedding"], dtype=np.float32)
-                sn = float(np.linalg.norm(sv))
-                if sn == 0 or qn == 0:
-                    continue
-                cs = float(np.dot(qv, sv) / (qn * sn))
-                d = 1.0 - cs
-                if d < best_d:
-                    best_d = d
-            print(f"[recognize] no match - mejor distancia: {best_d:.4f} (threshold actual)")
+        qv = np.array(embedding, dtype=np.float32)
+        qn = float(np.linalg.norm(qv))
+        best_d = float("inf")
+        for s in stored:
+            sv = np.array(s["embedding"], dtype=np.float32)
+            sn = float(np.linalg.norm(sv))
+            if sn == 0 or qn == 0:
+                continue
+            cs = float(np.dot(qv, sv) / (qn * sn))
+            d = 1.0 - cs
+            if d < best_d:
+                best_d = d
+        print(f"[recognize] no match - mejor distancia: {best_d:.4f} (threshold actual)")
+        save_recognition_log(
+            tenant_id=req.tenant_id, success=False, reason="no_match",
+            distance=best_d if best_d != float("inf") else None,
+            device_id=req.device_id, ip_address=ip,
+        )
         return {
             "recognized": False,
             "reason": "no_match",
@@ -145,6 +167,12 @@ async def recognize_face(req: RecognizeRequest):
         }
 
     print(f"[recognize] MATCH cliente={match['cliente_id'][:8]} distancia={match['distance']:.4f}")
+    save_recognition_log(
+        tenant_id=req.tenant_id, success=True, reason="match",
+        cliente_id=match["cliente_id"],
+        distance=match["distance"], confidence=match["confidence"],
+        device_id=req.device_id, ip_address=ip,
+    )
     return {
         "recognized": True,
         "cliente_id": match["cliente_id"],
