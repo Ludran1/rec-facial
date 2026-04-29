@@ -210,12 +210,65 @@ def save_recognition_log(
         print(f"[audit] error guardando log: {e}")
 
 
+# ── Huellas dactilares ─────────────────────────────────────────────
+
+def get_fingerprints_by_tenant(tenant_id: str) -> list[dict]:
+    """Retorna todos los templates de huellas de un tenant con su uid y cliente_id."""
+    client = get_client()
+    result = (
+        client.table("huellas")
+        .select("uid, cliente_id, template")
+        .eq("tenant_id", tenant_id)
+        .execute()
+    )
+    return result.data or []
+
+
+def save_fingerprint(cliente_id: str, tenant_id: str, template_b64: str) -> dict:
+    """Guarda o reemplaza la huella de un cliente. Asigna uid auto-incremental."""
+    client = get_client()
+
+    # Obtener próximo uid disponible para este tenant
+    existing = (
+        client.table("huellas")
+        .select("uid")
+        .eq("tenant_id", tenant_id)
+        .order("uid", desc=True)
+        .limit(1)
+        .execute()
+    )
+    next_uid = (existing.data[0]["uid"] + 1) if existing.data else 1
+
+    # Upsert por cliente_id (un cliente = una huella)
+    client.table("huellas").delete().eq("cliente_id", cliente_id).execute()
+    result = (
+        client.table("huellas")
+        .insert({
+            "cliente_id": cliente_id,
+            "tenant_id": tenant_id,
+            "template": template_b64,
+            "uid": next_uid,
+        })
+        .execute()
+    )
+    client.table("clientes").update({"huella_registered": True}).eq("id", cliente_id).execute()
+    return result.data[0] if result.data else {}
+
+
+def delete_fingerprint_by_cliente(cliente_id: str) -> int:
+    """Elimina la huella de un cliente."""
+    client = get_client()
+    result = client.table("huellas").delete().eq("cliente_id", cliente_id).execute()
+    client.table("clientes").update({"huella_registered": False}).eq("id", cliente_id).execute()
+    return len(result.data) if result.data else 0
+
+
 def get_cliente(cliente_id: str) -> dict | None:
     """Obtiene datos básicos del cliente."""
     client = get_client()
     result = (
         client.table("clientes")
-        .select("id, nombre, dni, estado, avatar_url, nombre_membresia, tipo_membresia, fecha_fin, membresia_id, tenant_id, asistencias, face_registered")
+        .select("id, nombre, dni, estado, avatar_url, nombre_membresia, tipo_membresia, fecha_fin, membresia_id, tenant_id, asistencias, face_registered, huella_registered")
         .eq("id", cliente_id)
         .maybeSingle()
         .execute()

@@ -7,6 +7,7 @@ from fastapi.responses import JSONResponse
 from app.config import CORS_ORIGINS, FACE_API_KEY
 from app.routes.faces import router as faces_router
 from app.routes.health import router as health_router
+from app.routes.fingerprint import router as fingerprint_router
 from app.services.face_service import preload_model
 
 app = FastAPI(title="FitGym - Reconocimiento Facial", version="1.0.0")
@@ -56,6 +57,7 @@ async def verify_api_key(request: Request, call_next):
 
 app.include_router(health_router, prefix="/api")
 app.include_router(faces_router, prefix="/api/faces")
+app.include_router(fingerprint_router, prefix="/api/fingerprint")
 
 
 @app.on_event("startup")
